@@ -1,0 +1,28 @@
+# Core dependencies
+torch>=2.2.0
+transformers>=4.50.0  # Gemma 3 requires transformers 4.50.0+
+accelerate>=0.30.0
+datasets>=2.17.0
+peft>=0.8.0           # For parameter-efficient fine-tuning
+bitsandbytes>=0.43.0  # For quantization
+deepspeed>=0.13.0     # For distributed training
+tensorboard>=2.15.0   # For training visualization
+wandb>=0.16.0         # For experiment tracking
+huggingface-hub>=0.20.0
+safetensors>=0.4.0
+sentencepiece>=0.1.99
+tqdm>=4.66.0
+torchvision>=0.17.0   # For image processing in multimodal training
+pillow>=10.2.0        # For image handling
+einops>=0.7.0         # For tensor operations
+scipy>=1.12.0
+matplotlib>=3.8.0     # For visualization in notebooks
+
+# For higher quality fine-tuning
+flash-attn>=2.5.0     # Optional, for faster training with attention
+optimum>=1.16.0       # For model optimization
+
+# Optional utilities
+ipywidgets>=8.1.0     # For notebook widgets
+jupyter>=1.0.0        # For notebook development
+tensorboard-plugin-profile>=2.15.0  # For profiling

@@ -1,0 +1,37 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "~/miniforge3/envs/gemma3_env/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+    "python.formatting.provider": "black",
+    "editor.formatOnSave": true,
+    "editor.rulers": [88],
+    "python.terminal.activateEnvironment": true,
+    "files.watcherExclude": {
+      "**/outputs/**": true,
+      "**/models/**": true,
+      "**/logs/**": true,
+      "**/.git/**": true
+    },
+    "search.exclude": {
+      "**/outputs/**": true,
+      "**/models/**": true,
+      "**/logs/**": true,
+      "**/.git/**": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "ms-toolsai.jupyter",
+      "ms-vsliveshare.vsliveshare",
+      "njpwerner.autodocstring"
+    ]
+  }
+}
