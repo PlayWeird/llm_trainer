@@ -69,8 +69,20 @@ This project is designed to work with 3x RTX 3090 GPUs (24GB VRAM each, 72GB tot
 
 ## Key Scripts
 
+### Training Scripts
 - `scripts/training/train_gemma3_27b.py`: Main training script for Gemma 3 27B
-- `scripts/inference/test_model_loading.py`: Test script to verify model loading on GPUs
+- `scripts/training/train_gemma_lora.py`: Fine-tuning script for Gemma models with LoRA
+- `scripts/training/train_gemma_basic_lora.py`: Simpler training script with manual training loop
+- `scripts/training/test_gemma_training.py`: Test script to verify basic model and training setup
+
+### Inference Scripts
+- `scripts/inference/test_model_loading.py`: Test script to verify Gemma 3 27B loading on GPUs
+- `scripts/inference/test_gemma3_27b_loading.py`: Script for loading Gemma 3 27B with optimal settings
+- `scripts/inference/test_gemma_inference.py`: Test script for basic Gemma inference
+- `scripts/inference/test_cpu_setup.py`: Script to verify the Python environment setup
+- `scripts/inference/test_multi_gpu_compatibility.py`: Test script for multi-GPU compatibility
+
+### Utility Scripts
 - `utils/data_preprocessing.py`: Utilities for data preparation
 - `visualizations/training/plot_training_metrics.py`: Visualization tools for training metrics
 
@@ -85,7 +97,15 @@ If you encounter CUDA errors:
 
 ## Next Steps
 
-1. Fix GPU/CUDA setup issues
-2. Create a test dataset for initial training
-3. Run a small-scale training test
-4. Scale up to full model training
+1. Create and test datasets for model training
+2. Run a small-scale training test with the Gemma 2B model
+3. Scale up to full Gemma 3 27B model training
+4. Implement and test a proper evaluation pipeline
+
+## Recent Updates
+
+- Organized and standardized file naming conventions
+- Improved documentation across all scripts
+- Removed redundant test files
+- Ensured proper file organization
+- Enhanced README with comprehensive script descriptions

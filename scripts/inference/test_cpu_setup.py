@@ -2,7 +2,23 @@
 # -*- coding: utf-8 -*-
 
 """
-Test script to verify the Python environment is correctly set up.
+Test script to verify the Python environment is correctly set up for training LLMs.
+
+This script checks for all required dependencies needed for Gemma 3 training:
+- Python version
+- PyTorch and CUDA availability
+- Transformers library
+- Datasets library
+- Accelerate library for distributed training
+- PEFT library for parameter-efficient fine-tuning
+- BitsAndBytes for quantization
+- NumPy
+
+Usage:
+    python test_cpu_setup.py
+
+The script will log information about each dependency and report any missing
+packages that need to be installed.
 """
 
 import os
@@ -17,7 +33,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def main():
-    """Test the Python environment setup."""
+    """
+    Test the Python environment setup.
+    
+    This function checks for all required dependencies and their versions.
+    It attempts to import each package and logs its version if available,
+    or logs an error if the package is not installed.
+    
+    For PyTorch, it also checks CUDA availability and GPU information.
+    """
     logger.info(f"Python version: {sys.version}")
     
     try:

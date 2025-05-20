@@ -5,6 +5,19 @@
 Test script to verify if Gemma 3 27B can be loaded on the available GPUs.
 This script attempts to load the model with different configurations to find
 the most memory-efficient setup for your hardware.
+
+The script tests various loading configurations in the following order:
+1. Default floating point precision loading
+2. 8-bit quantization loading
+3. 4-bit quantization loading
+4. 4-bit quantization with Flash Attention 2 (if available)
+
+The script stops at the first successful configuration, making it an efficient
+way to find a working model loading strategy for your specific GPU hardware.
+
+Example usage:
+    python test_model_loading.py --use_4bit --use_flash_attn
+    python test_model_loading.py --model_name="google/gemma-3-27b-base"
 """
 
 import os
@@ -24,7 +37,18 @@ logger = logging.getLogger(__name__)
 
 
 def get_gpu_memory():
-    """Get the current GPU memory usage for all GPUs."""
+    """
+    Get the current GPU memory usage for all GPUs.
+    
+    Returns:
+        list: A list of dictionaries containing GPU memory information for each GPU:
+            - id: GPU index
+            - name: GPU device name
+            - total: Total memory in GB
+            - reserved: Memory reserved by PyTorch in GB
+            - allocated: Memory currently allocated in GB
+            - free: Available memory in GB
+    """
     gpu_memory = []
     num_gpus = torch.cuda.device_count()
     
@@ -50,7 +74,22 @@ def get_gpu_memory():
 
 
 def test_model_loading(model_name, load_in_4bit=False, load_in_8bit=False, use_flash_attn=False):
-    """Test loading the model with different configurations."""
+    """
+    Test loading the model with different configurations.
+    
+    This function attempts to load the specified model with the given configuration
+    and reports memory usage before and after loading. It also performs a simple
+    text generation test to verify the model works correctly.
+    
+    Args:
+        model_name (str): HuggingFace model name or path to local model
+        load_in_4bit (bool): Whether to use 4-bit quantization
+        load_in_8bit (bool): Whether to use 8-bit quantization
+        use_flash_attn (bool): Whether to use Flash Attention 2 implementation
+        
+    Returns:
+        bool: True if model loading and inference succeeded, False otherwise
+    """
     logger.info(f"Testing model loading for: {model_name}")
     logger.info(f"Configuration: 4-bit: {load_in_4bit}, 8-bit: {load_in_8bit}, Flash Attention: {use_flash_attn}")
     

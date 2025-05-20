@@ -2,39 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-Fine-tuning script for Gemma 3 27B model using Hugging Face Transformers.
-This script sets up distributed training using DeepSpeed for efficient multi-GPU usage.
-
-Features:
-- Quantization support (4-bit or 8-bit) to reduce GPU memory requirements
-- LoRA (Low-Rank Adaptation) for parameter-efficient fine-tuning
-- DeepSpeed ZeRO-3 integration for distributed training across multiple GPUs
-- Support for loading datasets from Hugging Face Hub or local files
-- Configuration via command-line arguments using dataclasses
-
-Example usage:
-    python train_gemma3_27b.py \
-        --model_name_or_path="google/gemma-3-27b-base" \
-        --train_file="/path/to/data.json" \
-        --output_dir="./outputs/gemma3-27b-finetuned" \
-        --num_train_epochs=3 \
-        --per_device_train_batch_size=1 \
-        --gradient_accumulation_steps=16 \
-        --learning_rate=2e-5
-
-Requirements:
-    - PyTorch 2.0+
-    - Transformers 4.30+
-    - DeepSpeed
-    - Accelerate
-    - PEFT
-    - BitsAndBytes
+Patched fine-tuning script for Gemma models using Hugging Face Transformers.
+This script works around the torch.get_default_device issue and other compatibility issues.
 """
 
 import os
 import argparse
 import logging
 import torch
+import warnings
 from transformers import (
     AutoModelForCausalLM, 
     AutoTokenizer,
@@ -57,10 +33,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# PATCH: Add get_default_device to torch module if it doesn't exist
+if not hasattr(torch, 'get_default_device'):
+    logger.info("Adding missing get_default_device to torch module")
+    def get_default_device():
+        if torch.cuda.is_available():
+            return torch.device('cuda:0')
+        else:
+            return torch.device('cpu')
+    # Add the function to the torch module
+    torch.get_default_device = get_default_device
+    logger.info(f"Patched torch.get_default_device() returning {torch.get_default_device()}")
+
 @dataclass
 class ModelArguments:
     model_name_or_path: str = field(
-        default="google/gemma-3-27b-base",
+        default="google/gemma-2-2b",
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
     use_lora: bool = field(
@@ -110,7 +98,7 @@ class DataArguments:
 @dataclass
 class TrainingArguments(TrainingArguments):
     output_dir: str = field(
-        default="./outputs/gemma-3-27b-finetuned",
+        default="./outputs/gemma-finetuned",
         metadata={"help": "The output directory where model predictions and checkpoints will be written"}
     )
     overwrite_output_dir: bool = field(
@@ -175,11 +163,13 @@ def main():
     set_seed(training_args.seed)
     
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    logger.info(f"Loading tokenizer from {model_args.model_name_or_path}")
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, use_safetensors=True)
     
     # Make sure the tokenizer has a padding token
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+        logger.info("Set padding token to EOS token")
 
     # Load model with quantization if specified
     load_in_4bit = model_args.use_4bit
@@ -189,6 +179,7 @@ def main():
     if load_in_4bit or load_in_8bit:
         from transformers import BitsAndBytesConfig
         
+        logger.info(f"Using {'4-bit' if load_in_4bit else '8-bit'} quantization")
         quantization_config = BitsAndBytesConfig(
             load_in_4bit=load_in_4bit,
             load_in_8bit=load_in_8bit,
@@ -197,13 +188,40 @@ def main():
             bnb_4bit_use_double_quant=True,
         )
     
-    model = AutoModelForCausalLM.from_pretrained(
-        model_args.model_name_or_path,
-        quantization_config=quantization_config,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-        device_map="auto"
-    )
+    # Model loading keywords
+    model_kwargs = {
+        "quantization_config": quantization_config if (load_in_4bit or load_in_8bit) else None,
+        "torch_dtype": torch.bfloat16,
+        "trust_remote_code": True,
+        "use_safetensors": True,  # Use safetensors to avoid PyTorch vulnerability
+    }
+    
+    # Handle device mapping based on GPU count
+    num_gpus = torch.cuda.device_count()
+    logger.info(f"Detected {num_gpus} GPUs")
+    
+    if num_gpus > 1:
+        logger.info("Using balanced device mapping for multiple GPUs")
+        model_kwargs["device_map"] = "balanced"
+    else:
+        logger.info("Using single GPU")
+        model_kwargs["device_map"] = 0  # Use first GPU explicitly
+    
+    # Filter out None values
+    model_kwargs = {k: v for k, v in model_kwargs.items() if v is not None}
+    
+    logger.info(f"Loading model from {model_args.model_name_or_path}")
+    logger.info(f"Model loading parameters: {model_kwargs}")
+    
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_args.model_name_or_path,
+            **model_kwargs
+        )
+        logger.info("Model loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
+        raise
     
     # Apply LoRA if specified
     if model_args.use_lora:
@@ -220,6 +238,7 @@ def main():
         model.print_trainable_parameters()
     
     # Load dataset
+    logger.info("Loading dataset")
     if data_args.dataset_name is not None:
         # Load from hub
         datasets = load_dataset(
@@ -236,6 +255,8 @@ def main():
         
         extension = data_args.train_file.split(".")[-1] if data_args.train_file else "json"
         datasets = load_dataset(extension, data_files=data_files)
+    
+    logger.info(f"Dataset loaded: {datasets}")
     
     # Preprocessing function
     def preprocess_function(examples):
@@ -272,9 +293,11 @@ def main():
     )
     
     # Training
+    logger.info("Starting training")
     train_result = trainer.train()
     
     # Save the model
+    logger.info("Saving model")
     trainer.save_model()
     
     # Save training metrics
@@ -287,4 +310,9 @@ def main():
 
 
 if __name__ == "__main__":
+    # Suppress certain warnings
+    warnings.filterwarnings("ignore", 
+                           message=".*This implementation of AdamW is equivalent to setting.*", 
+                           category=UserWarning)
+    
     main()
