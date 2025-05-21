@@ -1,0 +1,13 @@
+# Ignore large dataset files and directories
+*.json
+*.jsonl
+*.csv
+*.txt
+*.tsv
+
+# Ignore images
+*/images/*
+*/*/images/*
+
+# Allow specific smaller files if needed
+# !example_small_data.json

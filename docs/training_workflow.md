@@ -35,7 +35,7 @@ mkdir -p datasets/gemma_instruction_dataset
 python utils/data_preprocessing.py \
   --input_file your_raw_data.json \
   --output_file datasets/gemma_instruction_dataset/processed_data.json \
-  --format alpaca
+  --format dolly
 ```
 
 ### Dataset Format
