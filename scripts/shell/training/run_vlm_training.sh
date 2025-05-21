@@ -115,26 +115,26 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Ensure conda environment is active
-if [ -z "${CONDA_DEFAULT_ENV}" ] || [ "${CONDA_DEFAULT_ENV}" != "gemma3_env" ]; then
-  echo "Activating gemma3_env conda environment..."
+if [ -z "${CONDA_DEFAULT_ENV}" ] || [ "${CONDA_DEFAULT_ENV}" != "llm_trainer_env" ]; then
+  echo "Activating llm_trainer_env conda environment..."
   
   # Check if conda is available as a command
   if command -v conda >/dev/null 2>&1; then
     eval "$(conda shell.bash hook)"
-    conda activate gemma3_env
+    conda activate llm_trainer_env
   else
     # Try to find and source conda.sh
     CONDA_BASE=$(conda info --base 2>/dev/null || echo "${HOME}/anaconda3")
     source "${CONDA_BASE}/etc/profile.d/conda.sh"
-    conda activate gemma3_env
+    conda activate llm_trainer_env
   fi
   
   # Verify activation
   if [ $? -ne 0 ]; then
-    echo "Error: Failed to activate gemma3_env conda environment"
+    echo "Error: Failed to activate llm_trainer_env conda environment"
     echo "Please create and activate it manually with:"
     echo "conda env create -f ${PROJECT_ROOT}/environment.yml"
-    echo "conda activate gemma3_env"
+    echo "conda activate llm_trainer_env"
     exit 1
   fi
 fi

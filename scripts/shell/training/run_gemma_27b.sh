@@ -2,7 +2,7 @@
 
 # Activate conda environment
 eval "$(conda shell.bash hook)"
-conda activate gemma3_env
+conda activate llm_trainer_env
 
 # Set environment variables to help with distributed operations
 export CUDA_VISIBLE_DEVICES=0,1,2  # Use all 3 GPUs

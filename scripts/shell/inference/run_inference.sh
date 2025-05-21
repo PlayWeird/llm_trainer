@@ -2,7 +2,7 @@
 
 # Activate conda environment
 eval "$(conda shell.bash hook)"
-conda activate gemma3_env
+conda activate llm_trainer_env
 
 # Run inference with Gemma
 echo "=== Running inference with Gemma 2-2B model ==="

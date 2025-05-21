@@ -6,10 +6,10 @@
 set -e  # Exit on any error
 
 # Activate conda environment if not already activated
-if [[ -z "${CONDA_DEFAULT_ENV}" || "${CONDA_DEFAULT_ENV}" != "gemma3_env" ]]; then
-    echo "Activating gemma3_env conda environment..."
+if [[ -z "${CONDA_DEFAULT_ENV}" || "${CONDA_DEFAULT_ENV}" != "llm_trainer_env" ]]; then
+    echo "Activating llm_trainer_env conda environment..."
     source $(conda info --base)/etc/profile.d/conda.sh
-    conda activate gemma3_env
+    conda activate llm_trainer_env
 fi
 
 # Default parameters

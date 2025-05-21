@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Important Guidelines
 
-- **Always work strictly within the conda environment** - All code should run within the `gemma3_env` conda environment
+- **Always work strictly within the conda environment** - All code should run within the `llm_trainer_env` conda environment
 - **Do not modify any system files** - Only modify files within the project directory
 - **Keep all model artifacts in the designated directories** - Store datasets, models, and outputs in their respective directories
 
@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Create and activate conda environment (always work in this environment)
 conda env create -f environment.yml
-conda activate gemma3_env
+conda activate llm_trainer_env
 
 # Install additional requirements
 pip install -r requirements.txt
@@ -130,7 +130,7 @@ The codebase is optimized for training large models with limited GPU resources:
 ## Common Issues
 
 1. **Environment Issues**:
-   - Always ensure you're in the `gemma3_env` conda environment
+   - Always ensure you're in the `llm_trainer_env` conda environment
    - If you encounter dependency conflicts, resolve them within the conda environment without modifying system packages
    - Use `pip install --user` within the conda environment for additional packages
 

@@ -4,7 +4,7 @@
 conda env create -f environment.yml
 
 # Activate the environment
-echo "To activate the environment, run: conda activate gemma3_env"
+echo "To activate the environment, run: conda activate llm_trainer_env"
 
 # Install additional dependencies
 echo "After activating, you might need to install additional packages:"

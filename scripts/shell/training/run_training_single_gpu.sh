@@ -2,7 +2,7 @@
 
 # Activate conda environment
 eval "$(conda shell.bash hook)"
-conda activate gemma3_env
+conda activate llm_trainer_env
 
 # Set visible GPUs to just one
 export CUDA_VISIBLE_DEVICES=0

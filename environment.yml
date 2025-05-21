@@ -1,4 +1,4 @@
-name: gemma3_env
+name: llm_trainer_env
 channels:
   - pytorch
   - nvidia

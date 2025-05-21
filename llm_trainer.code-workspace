@@ -5,7 +5,7 @@
     }
   ],
   "settings": {
-    "python.defaultInterpreterPath": "~/miniforge3/envs/gemma3_env/bin/python",
+    "python.defaultInterpreterPath": "~/miniforge3/envs/llm_trainer_env/bin/python",
     "python.linting.enabled": true,
     "python.linting.pylintEnabled": true,
     "python.formatting.provider": "black",

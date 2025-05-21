@@ -52,7 +52,7 @@ conda env create -f environment.yml
 
 2. Activate the environment:
 ```bash
-conda activate gemma3_env
+conda activate llm_trainer_env
 ```
 
 3. Install additional requirements:
