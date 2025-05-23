@@ -154,12 +154,16 @@ class TrainingArguments(TrainingArguments):
         metadata={"help": "Limit the total amount of checkpoints"}
     )
     deepspeed: Optional[str] = field(
-        default="configs/training/ds_config_zero3.json",
+        default=None,
         metadata={"help": "Path to deepspeed config file"}
     )
     fp16: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether to use fp16 (mixed) precision instead of 32-bit"}
+    )
+    bf16: bool = field(
+        default=True,
+        metadata={"help": "Whether to use bf16 (mixed) precision instead of 32-bit"}
     )
     report_to: List[str] = field(
         default_factory=lambda: ["tensorboard", "wandb"],
@@ -197,12 +201,21 @@ def main():
             bnb_4bit_use_double_quant=True,
         )
     
+    # Check if DeepSpeed is being used to avoid device_map conflict
+    # For quantized models, use specific device placement
+    if training_args.deepspeed:
+        device_map = None
+    elif quantization_config is not None:
+        device_map = {'': torch.cuda.current_device()}
+    else:
+        device_map = "auto"
+    
     model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         quantization_config=quantization_config,
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
-        device_map="auto"
+        device_map=device_map
     )
     
     # Apply LoRA if specified

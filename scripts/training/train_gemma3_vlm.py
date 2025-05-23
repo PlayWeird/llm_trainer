@@ -176,12 +176,16 @@ class TrainingArguments(TrainingArguments):
         metadata={"help": "Limit the total amount of checkpoints"}
     )
     deepspeed: Optional[str] = field(
-        default="configs/training/ds_config_zero3.json",
+        default=None,
         metadata={"help": "Path to deepspeed config file"}
     )
     fp16: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether to use fp16 (mixed) precision instead of 32-bit"}
+    )
+    bf16: bool = field(
+        default=True,
+        metadata={"help": "Whether to use bf16 (mixed) precision instead of 32-bit"}
     )
     report_to: List[str] = field(
         default_factory=lambda: ["tensorboard", "wandb"],
