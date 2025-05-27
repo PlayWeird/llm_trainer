@@ -2,25 +2,29 @@
 # -*- coding: utf-8 -*-
 
 """
-Fine-tuning script for Gemma 3 27B VLM (Vision-Language Model) using Hugging Face Transformers.
-This script extends train_gemma3_27b.py to support multimodal training with image-text pairs.
+Fine-tuning script for Gemma-3 Vision-Language Model using Hugging Face Transformers.
+This script supports multimodal training with image-text pairs for models like:
+- google/gemma-3-4b-it
+- google/gemma-3-12b-it
+- google/gemma-3-27b-it
 
 Features:
 - Support for image-text pairs from datasets like Flickr8k
-- Multimodal preprocessing with prepare_multimodal_dataset from utils
+- Uses native Gemma3ForConditionalGeneration for multimodal processing
 - Quantization support (4-bit or 8-bit) to reduce GPU memory requirements
 - LoRA (Low-Rank Adaptation) for parameter-efficient fine-tuning
 - DeepSpeed ZeRO-3 integration for distributed training across multiple GPUs
+- Gradient checkpointing for memory efficiency
 
 Example usage:
     python train_gemma3_vlm.py \
-        --model_name_or_path="google/gemma-3-27b-it" \
-        --dataset_path="/path/to/data.json" \
-        --image_dir="/path/to/images" \
-        --output_dir="./outputs/gemma3-27b-vlm-finetuned" \
+        --model_name_or_path="google/gemma-3-12b-it" \
+        --dataset_path="/path/to/flickr8k.json" \
+        --image_dir="/path/to/flickr8k/images" \
+        --output_dir="./outputs/gemma3-12b-vlm-finetuned" \
         --num_train_epochs=3 \
         --per_device_train_batch_size=1 \
-        --gradient_accumulation_steps=16 \
+        --gradient_accumulation_steps=8 \
         --learning_rate=2e-5
 
 Requirements:
@@ -34,30 +38,24 @@ Requirements:
 """
 
 import os
-import argparse
+import json
 import logging
 import torch
+from PIL import Image
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
 from transformers import (
-    AutoModelForCausalLM, 
-    AutoTokenizer,
     AutoProcessor,
+    Gemma3ForConditionalGeneration,
     TrainingArguments,
     Trainer,
     set_seed,
     HfArgumentParser
 )
 from datasets import load_dataset, Dataset
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 import deepspeed
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
-import sys
-import json
-from PIL import Image
-
-# Add parent directory to path to import utils
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from utils.data_preprocessing import prepare_multimodal_dataset
 
 # Configure logging
 logging.basicConfig(
@@ -69,7 +67,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ModelArguments:
     model_name_or_path: str = field(
-        default="google/gemma-3-27b-it",
+        default="google/gemma-3-12b-it",
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
     use_lora: bool = field(
@@ -106,33 +104,24 @@ class DataArguments:
         default=None, metadata={"help": "The configuration name of the dataset to use"}
     )
     dataset_path: Optional[str] = field(
-        default=None, metadata={"help": "The input training data file (JSON)"}
+        default=None, metadata={"help": "Path to local dataset JSON file"}
     )
-    image_dir: str = field(
-        default="datasets/test_dataset/vlm/flickr8k/images",
-        metadata={"help": "Directory containing the image files"}
-    )
-    validation_split: float = field(
-        default=0.1,
-        metadata={"help": "Percentage of training data to use as validation"}
+    image_dir: Optional[str] = field(
+        default=None, metadata={"help": "Directory containing images"}
     )
     max_seq_length: Optional[int] = field(
         default=2048,
         metadata={"help": "The maximum total input sequence length after tokenization"}
     )
-    prompt_template: str = field(
-        default="<start_of_turn>user\n{instruction}<end_of_turn>\n<start_of_turn>model\n",
-        metadata={"help": "Template for formatting prompts"}
-    )
-    response_template: str = field(
-        default="{output}<end_of_turn>",
-        metadata={"help": "Template for formatting responses"}
+    preprocessing_num_workers: Optional[int] = field(
+        default=4,
+        metadata={"help": "The number of processes to use for the preprocessing"}
     )
 
 @dataclass
 class TrainingArguments(TrainingArguments):
     output_dir: str = field(
-        default="./outputs/gemma-3-27b-vlm-finetuned",
+        default="./outputs/gemma3-vlm-finetuned",
         metadata={"help": "The output directory where model predictions and checkpoints will be written"}
     )
     overwrite_output_dir: bool = field(
@@ -148,7 +137,7 @@ class TrainingArguments(TrainingArguments):
         metadata={"help": "Batch size per GPU for training"}
     )
     gradient_accumulation_steps: int = field(
-        default=16,
+        default=8,
         metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass"}
     )
     learning_rate: float = field(
@@ -160,7 +149,7 @@ class TrainingArguments(TrainingArguments):
         metadata={"help": "Weight decay for AdamW optimizer"}
     )
     warmup_steps: int = field(
-        default=500,
+        default=100,
         metadata={"help": "Linear warmup over warmup_steps"}
     )
     logging_steps: int = field(
@@ -187,123 +176,138 @@ class TrainingArguments(TrainingArguments):
         default=True,
         metadata={"help": "Whether to use bf16 (mixed) precision instead of 32-bit"}
     )
+    gradient_checkpointing: bool = field(
+        default=True,
+        metadata={"help": "Whether to use gradient checkpointing to save memory"}
+    )
+    optim: str = field(
+        default="adamw_torch",
+        metadata={"help": "The optimizer to use: adamw_torch, adamw_8bit"}
+    )
     report_to: List[str] = field(
-        default_factory=lambda: ["tensorboard", "wandb"],
+        default_factory=lambda: ["none"],
         metadata={"help": "The list of integrations to report the results and logs to"}
     )
+    remove_unused_columns: bool = field(
+        default=False,
+        metadata={"help": "Remove columns not used by the model"}
+    )
 
-# Custom data collator for multimodal inputs
-class MultimodalDataCollator:
-    def __init__(self, tokenizer, processor=None):
-        self.tokenizer = tokenizer
+class Gemma3DataCollator:
+    """Data collator for Gemma-3 multimodal inputs"""
+    
+    def __init__(self, processor):
         self.processor = processor
         
-    def __call__(self, examples):
-        batch = {}
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        # Prepare messages for each example
+        messages_list = []
+        images_list = []
         
-        # Process text inputs
-        text_inputs = [example["text"] for example in examples]
-        tokenized = self.tokenizer(
-            text_inputs,
-            padding="longest",
+        for feature in features:
+            # Create conversation with user prompt and assistant response
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": feature["image"]},
+                        {"type": "text", "text": feature["text"]}
+                    ]
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": feature.get("caption", "")}]
+                }
+            ]
+            
+            messages_list.append(messages)
+            images_list.append(feature["image"])
+        
+        # Apply chat template and process
+        texts = [self.processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False) 
+                 for msgs in messages_list]
+        
+        # Process text and images together
+        batch = self.processor(
+            text=texts,
+            images=images_list,
+            padding=True,
             truncation=True,
             return_tensors="pt"
         )
         
-        batch.update(tokenized)
+        # For training, we need labels
+        # Set labels to -100 for pad tokens so they're ignored in loss calculation
+        labels = batch["input_ids"].clone()
+        labels[labels == self.processor.tokenizer.pad_token_id] = -100
+        batch["labels"] = labels
         
-        # Process image inputs if present
-        if all("image" in example and example.get("has_image", False) for example in examples):
-            if self.processor:
-                # If we have a processor, use it to process images
-                images = [example["image"] for example in examples]
-                if isinstance(images[0], str):
-                    # Load images from file paths
-                    images = [Image.open(img_path).convert("RGB") for img_path in images]
-                
-                image_features = self.processor(images=images, return_tensors="pt")
-                batch["pixel_values"] = image_features["pixel_values"]
-            else:
-                # Otherwise just pass image paths
-                batch["image_paths"] = [example["image"] for example in examples]
-        
-        # Create labels (shifted input_ids)
-        if "labels" not in batch:
-            batch["labels"] = batch["input_ids"].clone()
-            
         return batch
 
-def load_and_process_data(data_args, tokenizer, processor=None):
-    """Load and preprocess the dataset."""
-    logger.info("Loading and processing data")
+def load_flickr8k_dataset(dataset_path: str, image_dir: str) -> Dataset:
+    """Load Flickr8k dataset from local files"""
+    logger.info(f"Loading Flickr8k dataset from {dataset_path}")
     
-    if data_args.dataset_name:
-        # Load from Hugging Face Hub
-        logger.info(f"Loading dataset {data_args.dataset_name} from Hugging Face Hub")
-        datasets = load_dataset(
-            data_args.dataset_name,
-            data_args.dataset_config_name,
-        )
-        
-        # Check if this is a multimodal dataset with 'image' and 'text'/'caption' fields
-        # and convert to our desired format
-        if "train" in datasets:
-            train_data = datasets["train"]
-            
-            # Check if we need to convert the dataset format
-            if "image" in train_data.features and ("caption" in train_data.features or "text" in train_data.features):
-                logger.info("Converting Hugging Face dataset to multimodal format")
-                
-                # Determine the caption field
-                caption_field = "caption" if "caption" in train_data.features else "text"
-                
-                # Convert to our expected format
-                def convert_format(example):
-                    return {
-                        "instruction": "Describe this image in detail.",
-                        "output": example[caption_field],
-                        "image": example["image"],
-                    }
-                
-                datasets = datasets.map(convert_format)
+    # Load JSON file
+    with open(dataset_path, 'r') as f:
+        data = json.load(f)
     
-    elif data_args.dataset_path:
-        # Load from local file
-        logger.info(f"Loading dataset from {data_args.dataset_path}")
+    # Process each item
+    processed_data = []
+    image_dir_path = Path(image_dir)
+    
+    for item in data:
+        # Handle different possible field names
+        image_filename = item.get('image', item.get('image_path', ''))
         
-        with open(data_args.dataset_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        # Remove 'images/' prefix if it exists since we're already in the images directory
+        if image_filename.startswith('images/'):
+            image_filename = image_filename.replace('images/', '', 1)
         
-        # Create dataset
-        dataset = Dataset.from_list(data)
-        
-        # Split into train and validation
-        if data_args.validation_split > 0:
-            splits = dataset.train_test_split(test_size=data_args.validation_split)
-            datasets = {
-                "train": splits["train"],
-                "validation": splits["test"]
-            }
+        # Construct full image path
+        if not image_filename.startswith('/'):
+            image_path = image_dir_path / image_filename
         else:
-            datasets = {"train": dataset}
-    
-    else:
-        raise ValueError("You must specify either dataset_name or dataset_path")
-    
-    # Process the dataset into the multimodal format
-    processed_datasets = {}
-    
-    for split, dataset in datasets.items():
-        # Use our utility function to prepare the multimodal dataset
-        processed_datasets[split] = prepare_multimodal_dataset(
-            data_path=data_args.dataset_path,
-            image_dir=data_args.image_dir,
-            tokenizer=tokenizer,
-            processor=processor,
-            max_seq_length=data_args.max_seq_length
-        )
+            image_path = Path(image_filename)
         
-    return processed_datasets
+        if not image_path.exists():
+            logger.warning(f"Image not found: {image_path}")
+            continue
+        
+        # Get instruction and output/caption
+        instruction = item.get('instruction', 'Describe this image in detail.')
+        caption = item.get('output', item.get('caption', item.get('captions', '')))
+        
+        # Handle multiple captions if provided as list
+        if isinstance(caption, list):
+            # Create one example per caption
+            for cap in caption:
+                processed_data.append({
+                    'image_path': str(image_path),
+                    'text': instruction,
+                    'caption': cap
+                })
+        else:
+            # Single caption
+            processed_data.append({
+                'image_path': str(image_path),
+                'text': instruction,
+                'caption': caption
+            })
+    
+    logger.info(f"Loaded {len(processed_data)} image-caption pairs")
+    
+    # Create dataset
+    dataset = Dataset.from_list(processed_data)
+    
+    # Load images
+    def load_image(example):
+        example['image'] = Image.open(example['image_path']).convert('RGB')
+        return example
+    
+    dataset = dataset.map(load_image, num_proc=1)
+    
+    return dataset
 
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
@@ -312,24 +316,9 @@ def main():
     # Set seed for reproducibility
     set_seed(training_args.seed)
     
-    # Load tokenizer and processor
-    logger.info(f"Loading tokenizer from {model_args.model_name_or_path}")
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    # Load processor (handles both text and images)
+    processor = AutoProcessor.from_pretrained(model_args.model_name_or_path)
     
-    # Make sure the tokenizer has a padding token
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        logger.info("Set padding token to EOS token")
-    
-    # Try to load the processor for image handling
-    processor = None
-    try:
-        logger.info(f"Loading processor from {model_args.model_name_or_path}")
-        processor = AutoProcessor.from_pretrained(model_args.model_name_or_path)
-        logger.info("Processor loaded successfully")
-    except Exception as e:
-        logger.warning(f"Could not load processor: {e}. Will use basic PIL image handling.")
-
     # Load model with quantization if specified
     load_in_4bit = model_args.use_4bit
     load_in_8bit = model_args.use_8bit
@@ -338,7 +327,6 @@ def main():
     if load_in_4bit or load_in_8bit:
         from transformers import BitsAndBytesConfig
         
-        logger.info(f"Using {'4-bit' if load_in_4bit else '8-bit'} quantization")
         quantization_config = BitsAndBytesConfig(
             load_in_4bit=load_in_4bit,
             load_in_8bit=load_in_8bit,
@@ -347,78 +335,86 @@ def main():
             bnb_4bit_use_double_quant=True,
         )
     
-    # Model loading keywords
-    model_kwargs = {
-        "quantization_config": quantization_config if (load_in_4bit or load_in_8bit) else None,
-        "torch_dtype": torch.bfloat16,
-        "trust_remote_code": True,
-        "use_safetensors": True,  # Use safetensors to avoid PyTorch vulnerability
-    }
+    # Load model
+    logger.info(f"Loading model {model_args.model_name_or_path}")
     
-    # Handle device mapping based on GPU count
-    num_gpus = torch.cuda.device_count()
-    logger.info(f"Detected {num_gpus} GPUs")
-    
-    if num_gpus > 1:
-        logger.info("Using balanced device mapping for multiple GPUs")
-        model_kwargs["device_map"] = "auto"
+    # Check if DeepSpeed is being used
+    if training_args.deepspeed:
+        device_map = None
     else:
-        logger.info("Using single GPU")
-        model_kwargs["device_map"] = 0  # Use first GPU explicitly
+        device_map = "auto"
     
-    # Filter out None values
-    model_kwargs = {k: v for k, v in model_kwargs.items() if v is not None}
+    model = Gemma3ForConditionalGeneration.from_pretrained(
+        model_args.model_name_or_path,
+        quantization_config=quantization_config,
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
+        device_map=device_map
+    )
     
-    logger.info(f"Loading model from {model_args.model_name_or_path}")
-    logger.info(f"Model loading parameters: {model_kwargs}")
+    # Enable gradient checkpointing if specified
+    if training_args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
     
-    try:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            **model_kwargs
-        )
-        logger.info("Model loaded successfully")
-    except Exception as e:
-        logger.error(f"Error loading model: {e}")
-        raise
+    # Prepare model for k-bit training if using quantization
+    if quantization_config:
+        model = prepare_model_for_kbit_training(model)
     
     # Apply LoRA if specified
     if model_args.use_lora:
         logger.info("Using LoRA for fine-tuning")
+        
+        # Find target modules for LoRA
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+        
         peft_config = LoraConfig(
             r=model_args.lora_r,
             lora_alpha=model_args.lora_alpha,
             lora_dropout=model_args.lora_dropout,
             bias="none",
-            task_type="CAUSAL_LM",
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+            task_type="CAUSAL_LM",  # Use CAUSAL_LM for generative models
+            target_modules=target_modules
         )
+        
         model = get_peft_model(model, peft_config)
         model.print_trainable_parameters()
     
-    # Load and process the dataset
-    datasets = load_and_process_data(data_args, tokenizer, processor)
+    # Load dataset
+    if data_args.dataset_name:
+        # Load from Hugging Face Hub
+        logger.info(f"Loading dataset {data_args.dataset_name} from Hugging Face Hub")
+        dataset = load_dataset(data_args.dataset_name, data_args.dataset_config_name)
+        train_dataset = dataset["train"]
+    elif data_args.dataset_path and data_args.image_dir:
+        # Load local Flickr8k dataset
+        train_dataset = load_flickr8k_dataset(data_args.dataset_path, data_args.image_dir)
+    else:
+        raise ValueError("Either dataset_name or (dataset_path and image_dir) must be provided")
     
-    # Initialize data collator
-    data_collator = MultimodalDataCollator(tokenizer, processor)
+    # Create data collator
+    data_collator = Gemma3DataCollator(processor)
     
     # Initialize trainer
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=datasets["train"],
-        eval_dataset=datasets.get("validation", None),
-        tokenizer=tokenizer,
+        train_dataset=train_dataset,
         data_collator=data_collator,
+        processing_class=processor,
     )
     
     # Training
-    logger.info("Starting training")
+    logger.info("Starting training...")
     train_result = trainer.train()
     
     # Save the model
-    logger.info("Saving model")
-    trainer.save_model()
+    if model_args.use_lora:
+        # Save only the LoRA adapter weights
+        model.save_pretrained(training_args.output_dir)
+    else:
+        trainer.save_model()
     
     # Save training metrics
     metrics = train_result.metrics
@@ -426,8 +422,10 @@ def main():
     trainer.save_metrics("train", metrics)
     trainer.save_state()
     
-    logger.info("Training completed")
-
+    # Save processor
+    processor.save_pretrained(training_args.output_dir)
+    
+    logger.info("Training completed!")
 
 if __name__ == "__main__":
     main()
