@@ -32,13 +32,13 @@ deepspeed ../../training/train_gemma3_vlm.py \
   --logging_steps 10 \
   --save_steps 1000 \
   --save_total_limit 3 \
-  --use_lora True \
+  --use_lora \
   --lora_r 16 \
   --lora_alpha 32 \
   --lora_dropout 0.05 \
-  --use_8bit True \
+  --use_8bit \
   --max_seq_length 512 \
   --fp16 False \
   --bf16 True \
-  --gradient_checkpointing True \
+  --gradient_checkpointing \
   --report_to tensorboard

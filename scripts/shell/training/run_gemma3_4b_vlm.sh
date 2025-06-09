@@ -31,14 +31,14 @@ deepspeed ../../training/train_gemma3_vlm.py \
   --warmup_steps 100 \
   --logging_steps 10 \
   --save_steps 500 \
-  --use_lora True \
+  --use_lora \
   --lora_r 32 \
   --lora_alpha 64 \
   --lora_dropout 0.05 \
-  --use_8bit True \
+  --use_8bit \
   --max_seq_length 2048 \
   --fp16 False \
   --bf16 True \
-  --gradient_checkpointing False \
+  --no-gradient_checkpointing \
   --optim adamw_torch \
   --report_to tensorboard
