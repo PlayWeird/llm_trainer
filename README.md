@@ -1,6 +1,6 @@
 # LLM Trainer
 
-A project for training and fine-tuning local Large Language Models (LLMs) and Vision-Language Models (VLMs). The project focuses on testing various model architectures from Hugging Face, including but not limited to LLaVA, Llama, Gemma, and Deepseek R1.
+A comprehensive framework for training and fine-tuning Large Language Models (LLMs) and Vision-Language Models (VLMs). Successfully implements multi-GPU training with memory optimization for large models like Gemma 3 27B using DeepSpeed ZeRO-3, 4-bit quantization, and LoRA fine-tuning.
 
 ## Project Purpose
 
@@ -12,35 +12,53 @@ This project aims to:
 - Evaluate model performance with custom metrics
 - Visualize training progress and results
 
-## Current Focus
+## Current Status
 
-The current focus is on Gemma 3 27B, a powerful multimodal model that supports both text and image inputs.
+✅ **Working**: Multi-GPU Gemma 3 27B training with DeepSpeed ZeRO-3  
+✅ **Tested**: Qwen2.5-14B successful training run completed  
+✅ **Compatible**: PyTorch 2.2.0 + Transformers 4.53.0 with compatibility patches  
+✅ **Optimized**: Memory-efficient training on 3x RTX 3090 GPUs (72GB total VRAM)
+
+See `docs/project_status.md` for comprehensive project status and technical details.
 
 ## Directory Structure
 
 ```
 llm_trainer/
 ├── configs/             # Configuration files
-│   ├── model/           # Model architecture configurations
-│   └── training/        # Training hyperparameters
+│   └── training/        # DeepSpeed and training configurations
 ├── datasets/            # Training and testing datasets
+│   ├── processed/       # Processed datasets ready for training
+│   └── test_dataset/    # Raw test datasets (Dolly, Flickr8k)
+├── docs/                # Documentation and guides
+│   ├── gemma3_setup.md  # Gemma 3 setup and training guide
+│   ├── gpu_setup.md     # GPU configuration guide
+│   ├── project_status.md # Comprehensive project status
+│   └── training_workflow.md # Training workflow documentation
 ├── evaluation/          # Evaluation code and results
-│   ├── analysis/        # Analysis tools
-│   └── metrics/         # Performance metrics
-├── logs/                # Training logs
-├── models/              # Model architecture definitions
+├── models/              # Model artifacts and checkpoints
 │   ├── llm/             # Text-only language models
 │   └── vlm/             # Vision-language models
-├── notebooks/           # Jupyter notebooks for exploration
-├── outputs/             # Saved model outputs and checkpoints
-├── scripts/             # Python scripts
-│   ├── inference/       # Code for running inference
-│   ├── preprocessing/   # Data preprocessing
-│   └── training/        # Training code
-├── utils/               # Utility functions
-└── visualizations/      # Visualization tools
-    ├── inference/       # Inference result visualizations
-    └── training/        # Training metric visualizations
+├── outputs/             # Successful training outputs only
+│   └── qwen25-14b-quick-test/ # Working model from successful run
+├── scripts/             # Organized by functionality
+│   ├── inference/       # Model testing and inference scripts
+│   ├── preprocessing/   # Data preprocessing utilities
+│   ├── shell/           # Shell scripts organized by purpose
+│   │   ├── inference/   # Inference shell scripts
+│   │   ├── setup/       # Environment setup scripts
+│   │   ├── testing/     # Testing automation scripts
+│   │   ├── training/    # Training shell scripts
+│   │   └── utils/       # Utility shell scripts
+│   ├── testing/         # Comprehensive test suites
+│   └── training/        # Model-specific training scripts
+├── utils/               # Reusable utility modules
+│   ├── data_preprocessing.py # Data processing utilities
+│   ├── model_utils.py   # Model loading and configuration
+│   ├── training_config.py # Training configuration management
+│   ├── training_utils.py # Training helper functions
+│   └── vlm_data_utils.py # VLM-specific data utilities
+└── visualizations/      # Training and inference visualization tools
 ```
 
 ## Environment Setup
@@ -60,6 +78,13 @@ conda activate llm_trainer_env
 pip install -r requirements.txt
 ```
 
+4. Optional - Install flash attention for faster training:
+```bash
+pip install flash-attn --no-build-isolation
+```
+
+See `docs/gpu_setup.md` for detailed GPU configuration and `CLAUDE.md` for complete setup instructions.
+
 ## GPU Setup Requirements
 
 This project is designed to work with 3x RTX 3090 GPUs (24GB VRAM each, 72GB total). The Gemma 3 27B model can be trained using:
@@ -67,34 +92,54 @@ This project is designed to work with 3x RTX 3090 GPUs (24GB VRAM each, 72GB tot
 - 4-bit quantization for memory efficiency
 - LoRA for parameter-efficient fine-tuning
 
-## Key Scripts
+## Quick Start
 
-### Training Scripts
-- `scripts/training/train_gemma3_27b.py`: Main training script for Gemma 3 27B
-- `scripts/training/train_gemma_lora.py`: Fine-tuning script for Gemma models with LoRA using Dolly dataset
-- `scripts/training/train_gemma_basic_lora.py`: Simpler training script with manual training loop
-- `scripts/training/train_gemma3_vlm.py`: Vision-Language Model training script for Gemma 3 27B with Flickr8k
-- `scripts/training/test_gemma_training.py`: Test script to verify basic model and training setup
+### Basic Training Example
+```bash
+# Train Qwen2.5-14B (proven working configuration)
+deepspeed scripts/training/train_qwen25_full.py \
+  --deepspeed configs/training/ds_config_zero3_memory_opt.json \
+  --model_name_or_path Qwen/Qwen2.5-14B-Instruct \
+  --train_file datasets/test_dataset/llm/dolly_formatted.json \
+  --output_dir outputs/qwen25-14b-production \
+  --per_device_train_batch_size 1 \
+  --gradient_accumulation_steps 16 \
+  --num_train_epochs 3 \
+  --learning_rate 2e-5 \
+  --use_lora True \
+  --use_4bit True
+```
 
-### Inference Scripts
-- `scripts/inference/test_model_loading.py`: Test script to verify Gemma 3 27B loading on GPUs
-- `scripts/inference/test_gemma3_27b_loading.py`: Script for loading Gemma 3 27B with optimal settings
-- `scripts/inference/test_gemma_inference.py`: Test script for basic Gemma inference
-- `scripts/inference/test_cpu_setup.py`: Script to verify the Python environment setup
-- `scripts/inference/test_multi_gpu_compatibility.py`: Test script for multi-GPU compatibility
+### Test Environment
+```bash
+# Verify GPU setup and model loading
+python scripts/inference/test_gemma_inference.py --use_4bit
 
-### Preprocessing Scripts
-- `scripts/preprocessing/download_test_datasets.py`: Script for downloading test datasets (Dolly for LLM and Flickr8k for VLM)
-- `scripts/preprocessing/process_flickr8k.py`: Script for processing Flickr8k dataset for VLM training with train/val/test splits
+# Run compatibility tests
+bash scripts/shell/utils/run_compatibility_test.sh
+```
 
-### Shell Scripts
-- `scripts/shell/training/run_training.sh`: Main script for running Gemma 3 27B training
-- `scripts/shell/training/run_vlm_training.sh`: Script for running VLM training with Flickr8k dataset
-- `scripts/shell/utils/download_test_datasets.sh`: Utility script for downloading datasets
+## Key Components
 
-### Utility Scripts
-- `utils/data_preprocessing.py`: Utilities for data preparation including instruction-tuning format for Dolly and multimodal support for Flickr8k
-- `visualizations/training/plot_training_metrics.py`: Visualization tools for training metrics
+### Proven Training Scripts
+- **`scripts/training/train_qwen25_full.py`** - Tested and working Qwen2.5 training
+- **`scripts/training/train_gemma3_vlm.py`** - Vision-Language Model training with modular components
+- **`scripts/training/train_idefics3_vlm.py`** - Idefics3 VLM training implementation
+
+### Comprehensive Testing Suite
+- **`scripts/inference/test_gemma_inference.py`** - Most comprehensive inference test with patches
+- **`scripts/testing/test_refactored_training.py`** - Complete training integration test
+- **`scripts/testing/validate_refactoring.py`** - Validation for modular components
+
+### Modular Utilities
+- **`utils/training_config.py`** - Centralized configuration management
+- **`utils/vlm_data_utils.py`** - Flexible VLM data processing
+- **`utils/model_utils.py`** - Reusable model loading functions
+
+### Shell Script Automation
+- **`scripts/shell/training/`** - Production training scripts for different models
+- **`scripts/shell/testing/`** - Automated testing workflows
+- **`scripts/shell/utils/`** - Utility scripts for monitoring and setup
 
 ## Vision-Language Model (VLM) Training
 
@@ -146,38 +191,51 @@ The `run_vlm_training.sh` script supports multiple options:
 
 ## Troubleshooting
 
-### CUDA Issues
+### Common Issues
 
-If you encounter CUDA errors:
-1. Check your NVIDIA driver version with `nvidia-smi`
-2. Check CUDA version compatibility with PyTorch
-3. Resolve any driver/library version mismatches
+**PyTorch Compatibility**: The project includes patches for PyTorch 2.2.0 + Transformers 4.53.0 compatibility issues. Use the provided test scripts which include necessary patches.
 
-### VLM Training Issues
+**Memory Issues**: 
+- Reduce `per_device_train_batch_size` 
+- Increase `gradient_accumulation_steps`
+- Ensure you're using 4-bit quantization (`--use_4bit True`)
 
-If VLM training fails:
-1. Check if the dataset was correctly processed
-2. Ensure the image paths in the processed dataset are correct
-3. Try with a smaller sample size (e.g., 10-100) for testing
-4. Make sure you have enough GPU memory (reduce batch size or use more GPUs if needed)
-5. Use the `--skip-processing` flag to reuse already processed data
+**Model Loading**: Use `scripts/inference/test_gemma_inference.py` for the most robust model loading test with all compatibility patches.
 
-## Next Steps
+**GPU Setup**: Run `nvidia-smi` and verify all 3 GPUs are detected. See `docs/gpu_setup.md` for detailed configuration.
 
-1. Create and test additional datasets for model training
-2. Run small-scale training tests with the Gemma 2B model
-3. Scale up to full Gemma 3 27B model training
-4. Implement and test a proper evaluation pipeline
-5. Expand VLM training to larger datasets and more diverse tasks
+For comprehensive troubleshooting, see `docs/project_status.md` and `scripts/README_COMPATIBILITY.md`.
 
-## Recent Updates
+## Architecture Highlights
 
-- Added VLM training capabilities with Flickr8k dataset
-- Created specialized processing scripts for VLM data
-- Enhanced data preprocessing utilities to support multimodal inputs with Flickr8k
-- Updated data utils to use Dolly dataset format for instruction tuning
-- Removed unused datasets (MMVP, Alpaca) and standardized on Dolly and Flickr8k
-- Added shell scripts for end-to-end VLM training
-- Organized and standardized file naming conventions
-- Improved documentation across all scripts
-- Ensured proper file organization
+### Memory Optimization
+- **DeepSpeed ZeRO-3**: Offloads parameters and optimizer states to CPU
+- **4-bit Quantization**: Reduces memory footprint by ~75%
+- **LoRA Fine-tuning**: Trains only small subset of parameters
+- **Gradient Accumulation**: Increases effective batch size without memory overhead
+
+### Multi-GPU Training
+- **Model Sharding**: Automatic distribution across 3x RTX 3090 GPUs
+- **Memory Efficiency**: 72GB total VRAM for large model training
+- **Communication Optimization**: Efficient gradient synchronization
+
+### Modular Design
+- **Reusable Components**: Centralized configuration and utility modules
+- **Flexible Data Processing**: Auto-detection of dataset formats
+- **Comprehensive Testing**: Integration tests and compatibility validation
+
+## Contributing
+
+1. Follow the project organization rules in `CLAUDE.md`
+2. Use the established directory structure
+3. Remove test artifacts and failed training runs regularly
+4. Consolidate documentation rather than creating duplicates
+5. Test changes with the provided test suites
+
+## Documentation
+
+- **`CLAUDE.md`** - Project instructions and organization rules
+- **`docs/project_status.md`** - Comprehensive project status and achievements
+- **`docs/gemma3_setup.md`** - Gemma 3 specific setup and training guide
+- **`docs/gpu_setup.md`** - GPU configuration and troubleshooting
+- **`docs/training_workflow.md`** - Training workflow documentation
