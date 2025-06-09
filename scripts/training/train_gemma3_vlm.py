@@ -38,24 +38,42 @@ Requirements:
 """
 
 import os
-import json
+import sys
 import logging
-import torch
-from PIL import Image
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+
+# Add parent directory to path to import utils
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
 from transformers import (
     AutoProcessor,
     Gemma3ForConditionalGeneration,
-    TrainingArguments,
-    Trainer,
-    set_seed,
-    HfArgumentParser
+    HfArgumentParser,
 )
-from datasets import load_dataset, Dataset
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-import deepspeed
+
+from utils import (
+    # Data utilities
+    GenericVLMDatasetLoader,
+    create_data_collator,
+    
+    # Configuration classes
+    ModelWithLoRAArguments,
+    VLMDataArguments,
+    TrainingArguments,
+    
+    # Model utilities
+    get_quantization_config,
+    load_model_for_training,
+    setup_lora,
+    save_model_and_processor,
+    log_gpu_memory_usage,
+    estimate_model_size,
+    
+    # Training utilities
+    setup_training_environment,
+    create_trainer,
+    save_training_info,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -64,357 +82,137 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-@dataclass
-class ModelArguments:
-    model_name_or_path: str = field(
-        default="google/gemma-3-12b-it",
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    use_lora: bool = field(
-        default=True,
-        metadata={"help": "Whether to use LoRA for fine-tuning"}
-    )
-    lora_r: int = field(
-        default=16,
-        metadata={"help": "LoRA attention dimension"}
-    )
-    lora_alpha: int = field(
-        default=32,
-        metadata={"help": "LoRA alpha parameter"}
-    )
-    lora_dropout: float = field(
-        default=0.05,
-        metadata={"help": "LoRA dropout"}
-    )
-    use_4bit: bool = field(
-        default=True,
-        metadata={"help": "Whether to use 4-bit quantization"}
-    )
-    use_8bit: bool = field(
-        default=False,
-        metadata={"help": "Whether to use 8-bit quantization"}
-    )
-
-@dataclass
-class DataArguments:
-    dataset_name: Optional[str] = field(
-        default=None, metadata={"help": "The name of the dataset to use (from the HF hub)"}
-    )
-    dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "The configuration name of the dataset to use"}
-    )
-    dataset_path: Optional[str] = field(
-        default=None, metadata={"help": "Path to local dataset JSON file"}
-    )
-    image_dir: Optional[str] = field(
-        default=None, metadata={"help": "Directory containing images"}
-    )
-    max_seq_length: Optional[int] = field(
-        default=2048,
-        metadata={"help": "The maximum total input sequence length after tokenization"}
-    )
-    preprocessing_num_workers: Optional[int] = field(
-        default=4,
-        metadata={"help": "The number of processes to use for the preprocessing"}
-    )
-
-@dataclass
-class TrainingArguments(TrainingArguments):
-    output_dir: str = field(
-        default="./outputs/gemma3-vlm-finetuned",
-        metadata={"help": "The output directory where model predictions and checkpoints will be written"}
-    )
-    overwrite_output_dir: bool = field(
-        default=True,
-        metadata={"help": "Overwrite the content of the output directory"}
-    )
-    num_train_epochs: float = field(
-        default=3.0,
-        metadata={"help": "Number of training epochs"}
-    )
-    per_device_train_batch_size: int = field(
-        default=1,
-        metadata={"help": "Batch size per GPU for training"}
-    )
-    gradient_accumulation_steps: int = field(
-        default=8,
-        metadata={"help": "Number of updates steps to accumulate before performing a backward/update pass"}
-    )
-    learning_rate: float = field(
-        default=2e-5,
-        metadata={"help": "The initial learning rate for AdamW optimizer"}
-    )
-    weight_decay: float = field(
-        default=0.01,
-        metadata={"help": "Weight decay for AdamW optimizer"}
-    )
-    warmup_steps: int = field(
-        default=100,
-        metadata={"help": "Linear warmup over warmup_steps"}
-    )
-    logging_steps: int = field(
-        default=10,
-        metadata={"help": "Log every X updates steps"}
-    )
-    save_steps: int = field(
-        default=500,
-        metadata={"help": "Save checkpoint every X updates steps"}
-    )
-    save_total_limit: Optional[int] = field(
-        default=3,
-        metadata={"help": "Limit the total amount of checkpoints"}
-    )
-    deepspeed: Optional[str] = field(
-        default=None,
-        metadata={"help": "Path to deepspeed config file"}
-    )
-    fp16: bool = field(
-        default=False,
-        metadata={"help": "Whether to use fp16 (mixed) precision instead of 32-bit"}
-    )
-    bf16: bool = field(
-        default=True,
-        metadata={"help": "Whether to use bf16 (mixed) precision instead of 32-bit"}
-    )
-    gradient_checkpointing: bool = field(
-        default=True,
-        metadata={"help": "Whether to use gradient checkpointing to save memory"}
-    )
-    optim: str = field(
-        default="adamw_torch",
-        metadata={"help": "The optimizer to use: adamw_torch, adamw_8bit"}
-    )
-    report_to: List[str] = field(
-        default_factory=lambda: ["none"],
-        metadata={"help": "The list of integrations to report the results and logs to"}
-    )
-    remove_unused_columns: bool = field(
-        default=False,
-        metadata={"help": "Remove columns not used by the model"}
-    )
-
-class Gemma3DataCollator:
-    """Data collator for Gemma-3 multimodal inputs"""
-    
-    def __init__(self, processor):
-        self.processor = processor
-        
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
-        # Prepare messages for each example
-        messages_list = []
-        images_list = []
-        
-        for feature in features:
-            # Create conversation with user prompt and assistant response
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": feature["image"]},
-                        {"type": "text", "text": feature["text"]}
-                    ]
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": feature.get("caption", "")}]
-                }
-            ]
-            
-            messages_list.append(messages)
-            images_list.append(feature["image"])
-        
-        # Apply chat template and process
-        texts = [self.processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False) 
-                 for msgs in messages_list]
-        
-        # Process text and images together
-        batch = self.processor(
-            text=texts,
-            images=images_list,
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
-        )
-        
-        # For training, we need labels
-        # Set labels to -100 for pad tokens so they're ignored in loss calculation
-        labels = batch["input_ids"].clone()
-        labels[labels == self.processor.tokenizer.pad_token_id] = -100
-        batch["labels"] = labels
-        
-        return batch
-
-def load_flickr8k_dataset(dataset_path: str, image_dir: str) -> Dataset:
-    """Load Flickr8k dataset from local files"""
-    logger.info(f"Loading Flickr8k dataset from {dataset_path}")
-    
-    # Load JSON file
-    with open(dataset_path, 'r') as f:
-        data = json.load(f)
-    
-    # Process each item
-    processed_data = []
-    image_dir_path = Path(image_dir)
-    
-    for item in data:
-        # Handle different possible field names
-        image_filename = item.get('image', item.get('image_path', ''))
-        
-        # Remove 'images/' prefix if it exists since we're already in the images directory
-        if image_filename.startswith('images/'):
-            image_filename = image_filename.replace('images/', '', 1)
-        
-        # Construct full image path
-        if not image_filename.startswith('/'):
-            image_path = image_dir_path / image_filename
-        else:
-            image_path = Path(image_filename)
-        
-        if not image_path.exists():
-            logger.warning(f"Image not found: {image_path}")
-            continue
-        
-        # Get instruction and output/caption
-        instruction = item.get('instruction', 'Describe this image in detail.')
-        caption = item.get('output', item.get('caption', item.get('captions', '')))
-        
-        # Handle multiple captions if provided as list
-        if isinstance(caption, list):
-            # Create one example per caption
-            for cap in caption:
-                processed_data.append({
-                    'image_path': str(image_path),
-                    'text': instruction,
-                    'caption': cap
-                })
-        else:
-            # Single caption
-            processed_data.append({
-                'image_path': str(image_path),
-                'text': instruction,
-                'caption': caption
-            })
-    
-    logger.info(f"Loaded {len(processed_data)} image-caption pairs")
-    
-    # Create dataset
-    dataset = Dataset.from_list(processed_data)
-    
-    # Load images
-    def load_image(example):
-        example['image'] = Image.open(example['image_path']).convert('RGB')
-        return example
-    
-    dataset = dataset.map(load_image, num_proc=1)
-    
-    return dataset
 
 def main():
-    parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
+    """Main training function"""
+    # Parse arguments
+    parser = HfArgumentParser((ModelWithLoRAArguments, VLMDataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    # Set seed for reproducibility
-    set_seed(training_args.seed)
+    # Setup training environment
+    setup_training_environment(
+        seed=training_args.seed,
+        tf32=training_args.tf32,
+    )
+    
+    # Log configuration
+    logger.info(f"Model: {model_args.model_name_or_path}")
+    logger.info(f"Output dir: {training_args.output_dir}")
+    logger.info(f"Training epochs: {training_args.num_train_epochs}")
+    logger.info(f"Batch size: {training_args.per_device_train_batch_size}")
+    logger.info(f"Gradient accumulation: {training_args.gradient_accumulation_steps}")
+    logger.info(f"Learning rate: {training_args.learning_rate}")
     
     # Load processor (handles both text and images)
-    processor = AutoProcessor.from_pretrained(model_args.model_name_or_path)
+    logger.info("Loading processor...")
+    processor = AutoProcessor.from_pretrained(
+        model_args.model_name_or_path,
+        trust_remote_code=model_args.trust_remote_code
+    )
     
-    # Load model with quantization if specified
-    load_in_4bit = model_args.use_4bit
-    load_in_8bit = model_args.use_8bit
-    
-    quantization_config = None
-    if load_in_4bit or load_in_8bit:
-        from transformers import BitsAndBytesConfig
-        
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=load_in_4bit,
-            load_in_8bit=load_in_8bit,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-        )
-    
-    # Load model
-    logger.info(f"Loading model {model_args.model_name_or_path}")
+    # Get quantization config
+    quantization_config = get_quantization_config(
+        use_4bit=model_args.use_4bit,
+        use_8bit=model_args.use_8bit,
+        bnb_4bit_quant_type=model_args.bnb_4bit_quant_type,
+        bnb_4bit_compute_dtype=model_args.bnb_4bit_compute_dtype,
+        bnb_4bit_use_double_quant=model_args.bnb_4bit_use_double_quant,
+    )
     
     # Check if DeepSpeed is being used
     if training_args.deepspeed:
         device_map = None
+        logger.info("Using DeepSpeed, setting device_map to None")
     else:
-        device_map = "auto"
+        device_map = model_args.device_map
     
-    model = Gemma3ForConditionalGeneration.from_pretrained(
-        model_args.model_name_or_path,
+    # Load model
+    logger.info(f"Loading model {model_args.model_name_or_path}")
+    model = load_model_for_training(
+        model_name_or_path=model_args.model_name_or_path,
+        model_class=Gemma3ForConditionalGeneration,
         quantization_config=quantization_config,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-        device_map=device_map
+        torch_dtype=model_args.torch_dtype,
+        trust_remote_code=model_args.trust_remote_code,
+        device_map=device_map,
+        gradient_checkpointing=training_args.gradient_checkpointing,
     )
     
-    # Enable gradient checkpointing if specified
-    if training_args.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
-        if hasattr(model, "enable_input_require_grads"):
-            model.enable_input_require_grads()
-    
-    # Prepare model for k-bit training if using quantization
-    if quantization_config:
-        model = prepare_model_for_kbit_training(model)
+    # Log model size
+    model_info = estimate_model_size(model)
+    logger.info(f"Model size: {model_info['total_size_gb']:.2f}GB")
+    logger.info(f"Total parameters: {model_info['total_parameters']:,}")
     
     # Apply LoRA if specified
     if model_args.use_lora:
-        logger.info("Using LoRA for fine-tuning")
-        
-        # Find target modules for LoRA
-        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
-        
-        peft_config = LoraConfig(
-            r=model_args.lora_r,
+        model = setup_lora(
+            model=model,
+            lora_r=model_args.lora_r,
             lora_alpha=model_args.lora_alpha,
             lora_dropout=model_args.lora_dropout,
-            bias="none",
-            task_type="CAUSAL_LM",  # Use CAUSAL_LM for generative models
-            target_modules=target_modules
+            lora_target_modules=model_args.lora_target_modules,
+            lora_bias=model_args.lora_bias,
         )
         
-        model = get_peft_model(model, peft_config)
-        model.print_trainable_parameters()
+        # Log updated model info
+        model_info = estimate_model_size(model)
+        logger.info(f"Trainable parameters: {model_info['trainable_parameters']:,}")
+        logger.info(f"Trainable size: {model_info['trainable_size_gb']:.2f}GB")
+        logger.info(f"Trainable percentage: {model_info['trainable_percentage']:.2f}%")
+    
+    # Log GPU memory usage
+    log_gpu_memory_usage()
     
     # Load dataset
-    if data_args.dataset_name:
-        # Load from Hugging Face Hub
-        logger.info(f"Loading dataset {data_args.dataset_name} from Hugging Face Hub")
-        dataset = load_dataset(data_args.dataset_name, data_args.dataset_config_name)
-        train_dataset = dataset["train"]
-    elif data_args.dataset_path and data_args.image_dir:
-        # Load local Flickr8k dataset
-        train_dataset = load_flickr8k_dataset(data_args.dataset_path, data_args.image_dir)
-    else:
-        raise ValueError("Either dataset_name or (dataset_path and image_dir) must be provided")
+    logger.info("Loading dataset...")
+    train_dataset = GenericVLMDatasetLoader.load(
+        dataset_path=data_args.dataset_path,
+        image_dir=data_args.image_dir,
+        dataset_name=data_args.dataset_name,
+        dataset_config=data_args.dataset_config_name,
+        num_workers=data_args.preprocessing_num_workers,
+    )
+    
+    logger.info(f"Dataset size: {len(train_dataset)}")
     
     # Create data collator
-    data_collator = Gemma3DataCollator(processor)
+    data_collator = create_data_collator(
+        processor=processor,
+        model_type="gemma",
+        max_length=data_args.max_seq_length,
+    )
     
-    # Initialize trainer
-    trainer = Trainer(
+    # Create trainer
+    trainer = create_trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         data_collator=data_collator,
-        processing_class=processor,
+        tokenizer=processor,  # Processor acts as tokenizer
+        use_memory_efficient_trainer=True,
     )
     
     # Training
     logger.info("Starting training...")
+    logger.info(f"Number of training steps: {trainer.state.max_steps}")
+    
     train_result = trainer.train()
     
     # Save the model
+    logger.info("Saving model...")
     if model_args.use_lora:
         # Save only the LoRA adapter weights
-        model.save_pretrained(training_args.output_dir)
+        save_model_and_processor(
+            model=model,
+            processor=processor,
+            output_dir=training_args.output_dir,
+            is_lora=True,
+            save_full_model=False,
+        )
     else:
+        # Save full model
         trainer.save_model()
+        processor.save_pretrained(training_args.output_dir)
     
     # Save training metrics
     metrics = train_result.metrics
@@ -422,10 +220,21 @@ def main():
     trainer.save_metrics("train", metrics)
     trainer.save_state()
     
-    # Save processor
-    processor.save_pretrained(training_args.output_dir)
+    # Save training info
+    save_training_info(
+        output_dir=training_args.output_dir,
+        model_args=model_args,
+        data_args=data_args,
+        training_args=training_args,
+        metrics=metrics,
+    )
+    
+    # Log final GPU memory usage
+    logger.info("Final GPU memory usage:")
+    log_gpu_memory_usage()
     
     logger.info("Training completed!")
+
 
 if __name__ == "__main__":
     main()
