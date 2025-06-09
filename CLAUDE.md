@@ -7,6 +7,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Always work strictly within the conda environment** - All code should run within the `llm_trainer_env` conda environment
 - **Do not modify any system files** - Only modify files within the project directory
 - **Keep all model artifacts in the designated directories** - Store datasets, models, and outputs in their respective directories
+- **Maintain clean project structure** - Follow the organizational principles below to keep the codebase maintainable
+
+## Project Organization Rules
+
+### Directory Structure Standards
+- **`docs/`** - All documentation (setup guides, project status, architecture docs)
+- **`scripts/`** - Organized by purpose: `training/`, `inference/`, `testing/`, `preprocessing/`, `shell/`
+- **`configs/`** - Configuration files only (no empty placeholder directories)
+- **`outputs/`** - Only successful training outputs (remove failed/test runs regularly)
+- **`utils/`** - Reusable utility modules for data, models, training, and configuration
+
+### File Management Best Practices
+- **No redundant documentation** - Consolidate similar docs into single comprehensive files
+- **Remove test artifacts** - Clean up failed training runs and debug outputs regularly
+- **Use descriptive names** - Files should clearly indicate their purpose and scope
+- **No empty directories** - Remove unused directories immediately, don't leave .gitkeep files
+
+### Cleanup Guidelines
+When working on the project, regularly:
+1. **Remove failed training outputs** - Delete empty or incomplete runs from `outputs/`
+2. **Consolidate documentation** - Merge overlapping docs rather than creating new ones
+3. **Check for empty directories** - Remove any directories that serve no purpose
+4. **Organize by function** - Place files in appropriate directories by their purpose
 
 ## Commands
 
@@ -155,4 +178,4 @@ The codebase is optimized for training large models with limited GPU resources:
    - See `scripts/README_COMPATIBILITY.md` for details on the compatibility fixes
    - The main issues include missing `torch.get_default_device()` function and PyTorch security restrictions
    - For immediate results, use `scripts/inference/test_gemma_inference.py` which has all necessary patches
-   - See `RESULTS.md` for a summary of working components and remaining issues
+   - See `docs/project_status.md` for a comprehensive summary of working components and project status
