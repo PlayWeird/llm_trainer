@@ -69,15 +69,21 @@ class BaseVLMDataCollator:
             # Fallback for processors without chat template
             texts = [self._format_messages_fallback(msgs) for msgs in messages_list]
         
-        # Process text and images together
+        # Process text and images together - disable truncation to avoid image token issues
         batch = self.processor(
             text=texts,
             images=images_list if images_list else None,
             padding=True,
-            truncation=True,
-            max_length=self.max_length,
+            truncation=False,  # Disable truncation to avoid image token mismatch
             return_tensors="pt"
         )
+        
+        # Manual truncation if needed, preserving image tokens
+        if hasattr(batch, "input_ids") and batch["input_ids"].size(-1) > self.max_length:
+            # For now, just warn and skip truncation to avoid breaking image tokens
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Sequence length {batch['input_ids'].size(-1)} exceeds max_length {self.max_length}. Consider increasing max_length.")
         
         # For training, we need labels
         if "input_ids" in batch:
