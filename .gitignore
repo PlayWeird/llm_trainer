@@ -181,7 +181,8 @@ condaenv.*.requirements.txt
 
 # Large model files
 *.pt
+*.safetensors
 **/global_step*/
-**/checkpoint-*/optimizer.pt
-**/checkpoint-*/scaler.pt
-**/checkpoint-*/rng_state*.pth
+**/checkpoint-*/
+**/adapter_model.safetensors
+**/pytorch_model*.bin
